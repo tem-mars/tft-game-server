@@ -8,3 +8,7 @@ database:
   user: "postgres"
   password: "your_password"
   dbname: "tft_game"
+
+jwt:
+  secret: "your-secret-key-here"
+  

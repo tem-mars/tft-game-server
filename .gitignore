@@ -23,3 +23,42 @@ vendor/
 
 # Environment variables
 .env
+
+# Go workspace file
+go.work
+go.work.sum
+
+# Logs and databases
+*.log
+*.db
+*.sqlite
+
+# Node.js dependencies (if using a frontend with Node.js)
+node_modules/
+
+# Build directories
+dist/
+build/
+
+# Temporary files
+*.tmp
+*.temp
+
+# Frontend build artifacts (if applicable)
+public/build/
+public/dist/
+
+# Editor/IDE specific
+.DS_Store
+*.code-workspace
+
+# Local development files
+local.env
+*.local
+
+# Ignore local config files
+config.local.yaml
+*.local.yaml
+
+
+config.yaml

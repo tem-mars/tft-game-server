@@ -1,42 +1,21 @@
 package app
 
-import (
-    "github.com/spf13/viper"
-)
-
 type Config struct {
     Server struct {
-        Port string
         Host string
+        Port string
     }
-    Database struct {
-        Host     string
-        Port     string
-        User     string
-        Password string
-        DBName   string
+    JWT struct {
+        Secret string
     }
 }
 
 func LoadConfig() (*Config, error) {
-    viper.SetConfigName("config")
-    viper.SetConfigType("yaml")
-    viper.AddConfigPath(".")
-    viper.AutomaticEnv()
+    cfg := &Config{}
+    
+    cfg.Server.Host = "localhost"
+    cfg.Server.Port = "8080"
+    cfg.JWT.Secret = "your-secret-key"  
 
-    var config Config
-
-    // Default values
-    viper.SetDefault("server.port", "8080")
-    viper.SetDefault("server.host", "0.0.0.0")
-
-    if err := viper.ReadInConfig(); err != nil {
-        return nil, err
-    }
-
-    if err := viper.Unmarshal(&config); err != nil {
-        return nil, err
-    }
-
-    return &config, nil
+    return cfg, nil
 }

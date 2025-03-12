@@ -15,11 +15,19 @@ func main() {
     log := logger.New()
     defer log.Sync()
 
-    cfg, err := app.LoadConfig()
-    if err != nil {
-        log.Fatal("failed to load configuration", 
-            logger.Error(err),
-        )
+    cfg := &app.Config{
+        Server: struct {
+            Host string
+            Port string
+        }{
+            Host: "localhost",  
+            Port: "8080",
+        },
+        JWT: struct {
+            Secret string
+        }{
+            Secret: "your-secret-key",
+        },
     }
 
     application, err := app.New(cfg, log)

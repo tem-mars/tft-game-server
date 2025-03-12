@@ -6,12 +6,18 @@ import (
     "net/http"
     "time"
 
+    "github.com/gin-contrib/cors"
     "github.com/gin-gonic/gin"
+    "github.com/tem-mars/tft-game-server/internal/domain/game"
+    "github.com/tem-mars/tft-game-server/internal/handler"
+    "github.com/tem-mars/tft-game-server/internal/middleware"   
     "github.com/tem-mars/tft-game-server/pkg/logger"
+    "github.com/tem-mars/tft-game-server/internal/service"
+    "github.com/tem-mars/tft-game-server/internal/repository"
 )
 
 type App struct {
-    cfg    *Config
+    cfg    *Config  
     log    logger.Logger
     server *http.Server
 }
@@ -21,10 +27,48 @@ func New(cfg *Config, log logger.Logger) (*App, error) {
     router.Use(gin.Recovery())
     router.Use(LoggerMiddleware(log))
 
-    // Health check endpoint
+    // CORS middleware
+    router.Use(cors.New(cors.Config{
+        AllowOrigins:     []string{"*"},
+        AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"},
+        AllowHeaders:     []string{"Origin", "Content-Length", "Content-Type", "Authorization"},
+        ExposeHeaders:    []string{"Content-Length"},
+        AllowCredentials: true,
+        MaxAge:           12 * time.Hour,
+    }))
+
+
+    playerRepo := repository.NewMemoryPlayerRepository()
+    authService := service.NewAuthService(playerRepo, cfg.JWT.Secret)
+    gameManager := game.NewGameManager()
+
+    // Initialize handlers
+    authHandler := handler.NewAuthHandler(authService, log)
+    gameHandler := handler.NewGameHandler(gameManager, log, cfg.JWT.Secret) 
+
+    // Public routes
     router.GET("/health", func(c *gin.Context) {
         c.JSON(http.StatusOK, gin.H{"status": "ok"})
     })
+
+    // Auth routes
+    router.POST("/auth/register", authHandler.Register)
+    router.POST("/auth/login", authHandler.Login)
+
+
+    router.GET("/games/ws", gameHandler.HandleWebSocket)
+
+    // Protected routes
+    protected := router.Group("/")
+    protected.Use(middleware.AuthMiddleware(cfg.JWT.Secret))
+    {
+        protected.GET("/items", gameHandler.GetAvailableItems)
+        protected.POST("/games/:gameId/buy/:itemId", gameHandler.BuyItem)
+        protected.GET("/games/waiting", gameHandler.GetWaitingGames)
+        protected.POST("/games/match", gameHandler.AutoMatch)
+        protected.POST("/games", gameHandler.CreateGame)
+        protected.POST("/games/:gameId/join", gameHandler.JoinGame)
+    }
 
     server := &http.Server{
         Addr:    fmt.Sprintf("%s:%s", cfg.Server.Host, cfg.Server.Port),

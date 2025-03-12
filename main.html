@@ -1,0 +1,644 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>TFT Game</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f0f2f5;
+            margin: 0;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        h1 {
+            color: #1a73e8;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .connection-controls,
+        .game-controls {
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+        }
+
+        .message-box {
+            border: 1px solid #e1e4e8;
+            padding: 15px;
+            height: 300px;
+            overflow-y: auto;
+            margin-bottom: 20px;
+            border-radius: 4px;
+            background-color: #f8f9fa;
+            font-family: monospace;
+            font-size: 14px;
+        }
+
+        .player-info {
+            border: 1px solid #e1e4e8;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 4px;
+            background-color: #fff;
+        }
+
+        button {
+            padding: 8px 16px;
+            margin: 5px;
+            cursor: pointer;
+            background-color: #1a73e8;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            transition: background-color 0.3s;
+        }
+
+        button:hover {
+            background-color: #1557b0;
+        }
+
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+
+        input {
+            padding: 8px;
+            margin: 5px;
+            width: 300px;
+            border: 1px solid #e1e4e8;
+            border-radius: 4px;
+        }
+
+        .status {
+            padding: 5px 10px;
+            border-radius: 3px;
+            font-size: 0.9em;
+            display: inline-block;
+        }
+
+        .status.playing {
+            background-color: #28a745;
+            color: white;
+        }
+
+        .status.waiting {
+            background-color: #ffc107;
+            color: black;
+        }
+
+        .status.finished {
+            background-color: #dc3545;
+            color: white;
+        }
+
+        .player-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .stat {
+            background-color: #f8f9fa;
+            padding: 8px;
+            border-radius: 4px;
+            text-align: center;
+        }
+
+        .waiting-game {
+            background-color: #f8f9fa;
+            border: 1px solid #e1e4e8;
+            border-radius: 4px;
+            padding: 10px;
+            margin: 5px 0;
+        }
+
+        .game-controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            align-items: center;
+        }
+
+        .game-controls button {
+            flex: 0 0 auto;
+        }
+
+        .game-controls input {
+            flex: 1 1 auto;
+            min-width: 200px;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 5px;
+        }
+
+        .status-indicator.online {
+            background-color: #28a745;
+        }
+
+        .status-indicator.offline {
+            background-color: #dc3545;
+        }
+
+        .status-indicator.searching {
+            background-color: #ffc107;
+            animation: blink 1s infinite;
+        }
+
+        @keyframes blink {
+            50% {
+                opacity: 0.5;
+            }
+        }
+
+        .player-stats .stat {
+            position: relative;
+            overflow: hidden;
+        }
+
+        .player-stats .stat::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 3px;
+            background: linear-gradient(to right, #1a73e8 var(--health-percent, 100%), #dc3545 var(--health-percent, 100%));
+        }
+
+        .shop {
+            border: 1px solid #e1e4e8;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 4px;
+            background-color: #fff;
+        }
+
+        .items-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .item-card {
+            border: 1px solid #e1e4e8;
+            border-radius: 4px;
+            padding: 10px;
+            background-color: #f8f9fa;
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .item-card h4 {
+            margin: 0;
+            color: #1a73e8;
+        }
+
+        .item-stats {
+            font-size: 0.9em;
+            color: #666;
+        }
+
+        .item-cost {
+            color: #28a745;
+            font-weight: bold;
+        }
+
+        .item-card button {
+            margin-top: 5px;
+        }
+
+        .item-card button:disabled {
+            background-color: #ccc;
+        }
+
+        .game-controls button.shop-btn {
+            background-color: #28a745;
+        }
+
+        .game-controls button.shop-btn:hover {
+            background-color: #218838;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>TFT Game</h1>
+
+        <div class="connection-controls">
+            <input type="text" id="tokenInput" placeholder="Enter your token">
+            <button onclick="connect()">Connect</button>
+        </div>
+
+        <div class="game-controls">
+            <input type="text" id="gameIdInput" placeholder="Game ID">
+            <button onclick="createGame()">Create Game</button>
+            <button onclick="joinGame()">Join Game</button>
+            <button onclick="attack()" id="attackBtn" disabled>Attack</button>
+            <button onclick="findMatch()">Quick Match</button>
+            <button onclick="getWaitingGames()">Show Available Games</button>
+            <button onclick="toggleShop()" class="shop-btn">Shop</button>
+        </div>
+
+        <div class="player-info" id="playerInfo">
+            <h3>Player Information</h3>
+            <div id="playerDetails">Not connected</div>
+            <div class="player-stats" id="playerStats"></div>
+        </div>
+        <div class="shop" id="shopPanel" style="display: none;">
+            <h3>Shop</h3>
+            <div class="items-grid" id="shopItems"></div>
+        </div>
+
+        <div class="message-box" id="messageBox"></div>
+    </div>
+
+    <script>
+        let ws;
+        let currentGameId = '';
+        let currentPlayerId = '';
+        let otherPlayerId = '';
+
+        function connect() {
+            const token = document.getElementById('tokenInput').value;
+            if (!token) {
+                addMessage('Error: Token is required');
+                return;
+            }
+
+            ws = new WebSocket(`ws://localhost:8080/games/ws?token=${token}`);
+
+            ws.onopen = () => {
+                addMessage('Connected to server');
+                document.getElementById('tokenInput').disabled = true;
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    addMessage('Received: ' + JSON.stringify(data, null, 2));
+
+                    if (data.type === 'welcome') {
+                        currentPlayerId = data.playerID;
+                        updateGameState({
+                            id: 'Not in game',
+                            status: 'waiting',
+                            players: [{
+                                id: currentPlayerId,
+                                username: '',
+                                health: 100,
+                                gold: 0,
+                                level: 1,
+                                attack: 10,
+                                defense: 5
+                            }]
+                        });
+                    }
+
+                    if (data.type === 'game_state' || data.type === 'game_update') {
+                        const game = data.game || data.data;
+                        if (game) {
+                            currentGameId = game.id;
+                            document.getElementById('gameIdInput').value = game.id;
+
+                            otherPlayerId = game.players.find(p => p.id !== currentPlayerId)?.id;
+
+                            updateGameState(game);
+                            document.getElementById('attackBtn').disabled = game.status !== 'playing';
+                        }
+                    }
+                } catch (error) {
+                    addMessage('Error parsing message: ' + error.message);
+                }
+            };
+
+            ws.onclose = () => {
+                addMessage('Disconnected from server');
+                updateGameState({
+                    id: 'Disconnected',
+                    status: 'waiting',
+                    players: []
+                });
+                document.getElementById('tokenInput').disabled = false;
+                document.getElementById('attackBtn').disabled = true;
+            };
+
+            ws.onerror = (error) => {
+                addMessage('WebSocket Error: ' + (error.message || 'Unknown error'));
+                document.getElementById('tokenInput').disabled = false;
+            };
+        }
+
+        function createGame() {
+            if (!ws) {
+                addMessage('Not connected to server');
+                return;
+            }
+
+            fetch('http://localhost:8080/games', {
+                method: 'POST',
+                headers: {
+                    'Authorization': 'Bearer ' + document.getElementById('tokenInput').value
+                }
+            })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Network response was not ok');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    addMessage('Game created: ' + JSON.stringify(data, null, 2));
+                })
+                .catch(error => addMessage('Error creating game: ' + error.message));
+        }
+
+        function joinGame(gameId = null) {
+            const targetGameId = gameId || document.getElementById('gameIdInput').value;
+            if (!ws || !targetGameId) {
+                addMessage('Not connected or no game ID provided');
+                return;
+            }
+
+            fetch(`http://localhost:8080/games/${targetGameId}/join`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': 'Bearer ' + document.getElementById('tokenInput').value
+                }
+            })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Network response was not ok');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    addMessage('Joined game: ' + JSON.stringify(data, null, 2));
+                })
+                .catch(error => addMessage('Error joining game: ' + error.message));
+        }
+
+        function attack() {
+            if (!ws || !currentGameId || !otherPlayerId) {
+                addMessage('Not connected or no game/target available');
+                return;
+            }
+
+            try {
+                const message = {
+                    type: 'attack',
+                    game_id: currentGameId,
+                    target_id: otherPlayerId
+                };
+
+                ws.send(JSON.stringify(message));
+                addMessage('Sent attack command: ' + JSON.stringify(message, null, 2));
+            } catch (error) {
+                addMessage('Error sending attack: ' + error.message);
+            }
+        }
+
+        function findMatch() {
+            if (!ws) {
+                addMessage('Not connected to server');
+                return;
+            }
+
+            const matchButton = document.querySelector('button[onclick="findMatch()"]');
+            matchButton.disabled = true;
+            matchButton.textContent = 'Finding Match...';
+
+            // แก้ไข URL ให้ถูกต้อง
+            fetch('http://localhost:8080/games/match', {
+                method: 'POST',
+                headers: {
+                    'Authorization': 'Bearer ' + document.getElementById('tokenInput').value,
+                    'Content-Type': 'application/json'  // เพิ่ม header นี้
+                }
+            })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Network response was not ok');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    addMessage('Match found: ' + JSON.stringify(data, null, 2));
+                })
+                .catch(error => {
+                    addMessage('Error finding match: ' + error.message);
+                })
+                .finally(() => {
+                    matchButton.disabled = false;
+                    matchButton.textContent = 'Quick Match';
+                });
+        }
+
+        function getWaitingGames() {
+            if (!ws) {
+                addMessage('Not connected to server');
+                return;
+            }
+
+            fetch('http://localhost:8080/games/waiting', {
+                headers: {
+                    'Authorization': 'Bearer ' + document.getElementById('tokenInput').value
+                }
+            })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Network response was not ok');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    const gamesHTML = data.games.map(game => `
+                    <div class="waiting-game">
+                        Game ID: ${game.id}<br>
+                        Players: ${game.players.length}/2<br>
+                        Created: ${new Date(game.created_at).toLocaleTimeString()}<br>
+                        <button onclick="joinGame('${game.id}')">Join</button>
+                    </div>
+                `).join('');
+
+                    addMessage('Available Games:<br>' +
+                        (gamesHTML || 'No games waiting for players'));
+                })
+                .catch(error => addMessage('Error getting games: ' + error.message));
+        }
+
+        function updateGameState(game) {
+            const statusClass = game.status.toLowerCase();
+            const statusHTML = `<span class="status ${statusClass}">${game.status}</span>`;
+
+            const playersHTML = game.players.map(p => {
+                const isCurrentPlayer = p.id === currentPlayerId;
+                const healthPercent = (p.health / 100) * 100;
+                return `
+            <div class="stat" style="--health-percent: ${healthPercent}%">
+                <strong>${isCurrentPlayer ? 'You' : 'Opponent'}</strong><br>
+                ID: ${p.id}<br>
+                Health: ${p.health}<br>
+                Attack: ${p.attack}<br>
+                Defense: ${p.defense}<br>
+                Gold: ${p.gold}<br>
+                Level: ${p.level}
+            </div>
+            `;
+            }).join('');
+
+            document.getElementById('playerDetails').innerHTML = `
+            Game ID: ${game.id}<br>
+            Status: ${statusHTML}
+        `;
+            document.getElementById('playerStats').innerHTML = playersHTML;
+
+            // อัพเดทหน้าร้านค้าถ้าเปิดอยู่
+            if (shopVisible) {
+                updateShopDisplay();
+            }
+        }
+
+        function addMessage(message) {
+            const messageBox = document.getElementById('messageBox');
+            const timestamp = new Date().toLocaleTimeString();
+            messageBox.innerHTML += `[${timestamp}] ${message}<br><br>`;
+            messageBox.scrollTop = messageBox.scrollHeight;
+        }
+        let availableItems = [];
+        let shopVisible = false;
+
+        function toggleShop() {
+            const shopPanel = document.getElementById('shopPanel');
+            shopVisible = !shopVisible;
+            shopPanel.style.display = shopVisible ? 'block' : 'none';
+
+            if (shopVisible && availableItems.length === 0) {
+                loadShopItems();
+            }
+        }
+
+        function loadShopItems() {
+            if (!ws) {
+                addMessage('Not connected to server');
+                return;
+            }
+
+            fetch('http://localhost:8080/items', {
+                headers: {
+                    'Authorization': 'Bearer ' + document.getElementById('tokenInput').value
+                }
+            })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Network response was not ok');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    availableItems = data.items;
+                    updateShopDisplay();
+                })
+                .catch(error => addMessage('Error loading items: ' + error.message));
+        }
+
+        function updateShopDisplay() {
+            const shopItems = document.getElementById('shopItems');
+            const currentPlayer = getCurrentPlayer();
+            const playerGold = currentPlayer ? currentPlayer.gold : 0;
+
+            shopItems.innerHTML = availableItems.map(item => `
+            <div class="item-card">
+            <h4>${item.name}</h4>
+            <div class="item-stats">
+                ${item.attack > 0 ? `Attack: +${item.attack}<br>` : ''}
+                ${item.defense > 0 ? `Defense: +${item.defense}<br>` : ''}
+                ${item.health > 0 ? `Health: +${item.health}<br>` : ''}
+            </div>
+            <div class="item-cost">Cost: ${item.cost} Gold</div>
+            <button onclick="buyItem('${item.id}')" 
+                    ${!currentGameId || playerGold < item.cost ? 'disabled' : ''}>
+                Buy
+            </button>
+            </div>
+        `).join('');
+        }
+
+        function buyItem(itemId) {
+            if (!ws || !currentGameId) {
+                addMessage('Not connected or no active game');
+                return;
+            }
+
+            fetch(`http://localhost:8080/games/${currentGameId}/buy/${itemId}`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': 'Bearer ' + document.getElementById('tokenInput').value
+                }
+            })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Network response was not ok');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    addMessage('Item purchased: ' + JSON.stringify(data, null, 2));
+                })
+                .catch(error => addMessage('Error buying item: ' + error.message));
+        }
+
+        function getCurrentPlayer() {
+            const game = getCurrentGame();
+            if (!game || !game.players) return null;
+            return game.players.find(p => p.id === currentPlayerId);
+        }
+
+        function getCurrentGame() {
+            const playerDetails = document.getElementById('playerDetails');
+            const playerStats = document.getElementById('playerStats');
+            if (!playerDetails || !playerStats) return null;
+
+            return {
+                id: currentGameId,
+                players: Array.from(playerStats.children).map(stat => {
+                    const lines = stat.innerHTML.split('<br>');
+                    return {
+                        id: lines[1].split(': ')[1],
+                        health: parseInt(lines[2].split(': ')[1]),
+                        attack: parseInt(lines[3].split(': ')[1]),
+                        defense: parseInt(lines[4].split(': ')[1]),
+                        gold: parseInt(lines[5].split(': ')[1]),
+                        level: parseInt(lines[6].split(': ')[1])
+                    };
+                })
+            };
+        }
+
+
+
+    </script>
+</body>
+
+</html>
