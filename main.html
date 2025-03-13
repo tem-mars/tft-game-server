@@ -239,6 +239,37 @@
         .game-controls button.shop-btn:hover {
             background-color: #218838;
         }
+
+        .join-game-form {
+            margin: 15px 0;
+            display: flex;
+            gap: 10px;
+        }
+
+        .join-game-form input {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            flex: 1;
+        }
+
+        .join-game-form button {
+            padding: 8px 16px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        .join-game-form button:hover {
+            background-color: #0056b3;
+        }
+
+        .join-game-form button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
     </style>
 </head>
 
@@ -260,7 +291,10 @@
             <button onclick="getWaitingGames()">Show Available Games</button>
             <button onclick="toggleShop()" class="shop-btn">Shop</button>
         </div>
-
+        <div class="join-game-form">
+            <input type="text" id="gameIdInput" placeholder="Enter Game ID" />
+            <button onclick="joinGame()">Join Game</button>
+        </div>
         <div class="player-info" id="playerInfo">
             <h3>Player Information</h3>
             <div id="playerDetails">Not connected</div>
@@ -275,6 +309,28 @@
     </div>
 
     <script>
+        const style = document.createElement('style');
+        style.textContent = `
+            .waiting-game {
+                background-color: #f8f9fa;
+                border: 1px solid #dee2e6;
+                border-radius: 4px;
+                padding: 15px;
+                margin: 10px 0;
+            }
+
+            .waiting-game button {
+                margin-top: 10px;
+                padding: 5px 15px;
+            }
+
+            .waiting-game button:disabled {
+                background-color: #ccc;
+                cursor: not-allowed;
+            }
+        `;
+        document.head.appendChild(style);
+
         let ws;
         let currentGameId = '';
         let currentPlayerId = '';
@@ -294,44 +350,45 @@
                 document.getElementById('tokenInput').disabled = true;
             };
 
-            ws.onmessage = (event) => {
+            ws.onmessage = function (event) {
                 try {
                     const data = JSON.parse(event.data);
-                    addMessage('Received: ' + JSON.stringify(data, null, 2));
+                    console.log('Received WebSocket message:', data); // debug log
 
                     if (data.type === 'welcome') {
                         currentPlayerId = data.playerID;
-                        updateGameState({
-                            id: 'Not in game',
-                            status: 'waiting',
-                            players: [{
-                                id: currentPlayerId,
-                                username: '',
-                                health: 100,
-                                gold: 0,
-                                level: 1,
-                                attack: 10,
-                                defense: 5
-                            }]
-                        });
+                        addMessage('Connected as ' + data.playerID);
+                        // อัพเดทสถานะการเชื่อมต่อ
+                        document.getElementById('playerDetails').innerHTML = `Connected as: ${data.playerID}`;
                     }
+                    else if (data.type === 'game_state') {
+                        console.log('Updating game state:', data.game); // debug log
+                        currentGameId = data.game.id;
+                        document.getElementById('gameIdInput').value = data.game.id;
 
-                    if (data.type === 'game_state' || data.type === 'game_update') {
-                        const game = data.game || data.data;
-                        if (game) {
-                            currentGameId = game.id;
-                            document.getElementById('gameIdInput').value = game.id;
+                        // หา opponent
+                        otherPlayerId = data.game.players.find(p => p.id !== currentPlayerId)?.id;
 
-                            otherPlayerId = game.players.find(p => p.id !== currentPlayerId)?.id;
+                        // อัพเดทสถานะเกม
+                        updateGameState(data.game);
 
-                            updateGameState(game);
-                            document.getElementById('attackBtn').disabled = game.status !== 'playing';
-                        }
+                        // เปิดใช้งานปุ่ม Attack ถ้าเกมเริ่มแล้ว
+                        document.getElementById('attackBtn').disabled = data.game.status !== 'playing';
+
+                        addMessage('Game state updated: ' + JSON.stringify(data.game, null, 2));
+                    }
+                    else if (data.type === 'error') {
+                        addMessage('Error: ' + data.message);
+                    }
+                    else {
+                        addMessage(JSON.stringify(data, null, 2));
                     }
                 } catch (error) {
-                    addMessage('Error parsing message: ' + error.message);
+                    console.error('Error processing WebSocket message:', error);
+                    addMessage('Error processing message: ' + error.message);
                 }
             };
+
 
             ws.onclose = () => {
                 addMessage('Disconnected from server');
@@ -356,68 +413,115 @@
                 return;
             }
 
+            const token = document.getElementById('tokenInput').value;
+            console.log('Creating game with token:', token);
+
             fetch('http://localhost:8080/games', {
                 method: 'POST',
                 headers: {
-                    'Authorization': 'Bearer ' + document.getElementById('tokenInput').value
+                    'Authorization': 'Bearer ' + token,
+                    'Content-Type': 'application/json'
                 }
             })
                 .then(response => {
-                    if (!response.ok) {
-                        throw new Error('Network response was not ok');
-                    }
-                    return response.json();
+                    console.log('Server response:', response);
+                    return response.text().then(text => {
+                        console.log('Response text:', text);
+                        if (!response.ok) {
+                            throw new Error(`HTTP error! status: ${response.status}, message: ${text}`);
+                        }
+                        return JSON.parse(text);
+                    });
                 })
                 .then(data => {
+                    console.log('Parsed data:', data);
                     addMessage('Game created: ' + JSON.stringify(data, null, 2));
                 })
-                .catch(error => addMessage('Error creating game: ' + error.message));
+                .catch(error => {
+                    console.error('Error:', error);
+                    addMessage('Error creating game: ' + error.message);
+                });
         }
 
         function joinGame(gameId = null) {
-            const targetGameId = gameId || document.getElementById('gameIdInput').value;
-            if (!ws || !targetGameId) {
-                addMessage('Not connected or no game ID provided');
+            if (!ws) {
+                addMessage('Not connected to server');
                 return;
+            }
+
+            // ถ้าไม่มี gameId ที่ส่งมา ให้ใช้ค่าจาก input
+            const token = document.getElementById('tokenInput').value;
+            const targetGameId = gameId || document.getElementById('gameIdInput').value.trim();
+
+            console.log('Attempting to join game:', targetGameId);
+
+            if (!targetGameId) {
+                addMessage('Please enter a Game ID');
+                return;
+            }
+
+            if (!token) {
+                addMessage('Please login first');
+                return;
+            }
+
+            // เพิ่ม loading state
+            const joinButton = document.querySelector('button[onclick="joinGame()"]');
+            if (joinButton) {
+                joinButton.disabled = true;
+                joinButton.textContent = 'Joining...';
             }
 
             fetch(`http://localhost:8080/games/${targetGameId}/join`, {
                 method: 'POST',
                 headers: {
-                    'Authorization': 'Bearer ' + document.getElementById('tokenInput').value
+                    'Authorization': 'Bearer ' + token,
+                    'Content-Type': 'application/json'
                 }
             })
                 .then(response => {
+                    console.log('Join game response status:', response.status);
                     if (!response.ok) {
-                        throw new Error('Network response was not ok');
+                        return response.text().then(text => {
+                            throw new Error(`Failed to join game: ${text}`);
+                        });
                     }
                     return response.json();
                 })
                 .then(data => {
-                    addMessage('Joined game: ' + JSON.stringify(data, null, 2));
+                    console.log('Join game response data:', data);
+
+                    // อัพเดท currentGameId
+                    currentGameId = targetGameId;
+
+                    // ล้างค่า input
+                    document.getElementById('gameIdInput').value = '';
+
+                    addMessage(`Successfully joined game: ${targetGameId}`);
+                    addMessage('Waiting for game state update...');
                 })
-                .catch(error => addMessage('Error joining game: ' + error.message));
+                .catch(error => {
+                    console.error('Join game error:', error);
+                    addMessage('Error: ' + error.message);
+                })
+                .finally(() => {
+                    // คืนค่า button state
+                    if (joinButton) {
+                        joinButton.disabled = false;
+                        joinButton.textContent = 'Join Game';
+                    }
+                });
         }
 
-        function attack() {
-            if (!ws || !currentGameId || !otherPlayerId) {
-                addMessage('Not connected or no game/target available');
-                return;
+        // เพิ่ม Event Listener สำหรับ Enter key ใน input
+        document.getElementById('gameIdInput').addEventListener('keypress', function (e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                joinGame();
             }
+        });
 
-            try {
-                const message = {
-                    type: 'attack',
-                    game_id: currentGameId,
-                    target_id: otherPlayerId
-                };
 
-                ws.send(JSON.stringify(message));
-                addMessage('Sent attack command: ' + JSON.stringify(message, null, 2));
-            } catch (error) {
-                addMessage('Error sending attack: ' + error.message);
-            }
-        }
 
         function findMatch() {
             if (!ws) {
@@ -425,21 +529,26 @@
                 return;
             }
 
+            const token = document.getElementById('tokenInput').value;
+            if (!token) {
+                addMessage('No token provided');
+                return;
+            }
+
             const matchButton = document.querySelector('button[onclick="findMatch()"]');
             matchButton.disabled = true;
             matchButton.textContent = 'Finding Match...';
 
-            // แก้ไข URL ให้ถูกต้อง
             fetch('http://localhost:8080/games/match', {
                 method: 'POST',
                 headers: {
-                    'Authorization': 'Bearer ' + document.getElementById('tokenInput').value,
-                    'Content-Type': 'application/json'  // เพิ่ม header นี้
+                    'Authorization': 'Bearer ' + token,
+                    'Content-Type': 'application/json'
                 }
             })
                 .then(response => {
                     if (!response.ok) {
-                        throw new Error('Network response was not ok');
+                        throw new Error(`HTTP error! status: ${response.status}`);
                     }
                     return response.json();
                 })
@@ -454,77 +563,150 @@
                     matchButton.textContent = 'Quick Match';
                 });
         }
-
         function getWaitingGames() {
             if (!ws) {
                 addMessage('Not connected to server');
                 return;
             }
 
+            const token = document.getElementById('tokenInput').value;
+            console.log('Getting waiting games with token:', token);
+
             fetch('http://localhost:8080/games/waiting', {
                 headers: {
-                    'Authorization': 'Bearer ' + document.getElementById('tokenInput').value
+                    'Authorization': 'Bearer ' + token,
+                    'Content-Type': 'application/json'
                 }
             })
                 .then(response => {
+                    console.log('Waiting games response:', response.status);
                     if (!response.ok) {
-                        throw new Error('Network response was not ok');
+                        return response.text().then(text => {
+                            throw new Error(`HTTP error! status: ${response.status}, message: ${text}`);
+                        });
                     }
                     return response.json();
                 })
                 .then(data => {
-                    const gamesHTML = data.games.map(game => `
-                    <div class="waiting-game">
-                        Game ID: ${game.id}<br>
-                        Players: ${game.players.length}/2<br>
-                        Created: ${new Date(game.created_at).toLocaleTimeString()}<br>
-                        <button onclick="joinGame('${game.id}')">Join</button>
-                    </div>
-                `).join('');
+                    console.log('Waiting games data:', data);
+                    const games = data.games || [];
 
-                    addMessage('Available Games:<br>' +
-                        (gamesHTML || 'No games waiting for players'));
+                    if (games.length === 0) {
+                        addMessage('No games waiting for players');
+                        return;
+                    }
+
+                    // แสดงเกมที่รอผู้เล่นในรูปแบบที่อ่านง่ายขึ้น
+                    const gamesHTML = games.map(game => `
+            <div class="waiting-game">
+                <strong>Game ID:</strong> ${game.id}<br>
+                <strong>Players:</strong> ${game.players.length}/2<br>
+                <strong>Current Players:</strong> ${game.players.map(p => p.username || p.id).join(', ')}<br>
+                <strong>Created:</strong> ${new Date(game.created_at).toLocaleTimeString()}<br>
+                <strong>Status:</strong> ${game.status}<br>
+                <button onclick="joinGame('${game.id}')" 
+                    ${game.status !== 'waiting' ? 'disabled' : ''}>
+                    Join Game
+                </button>
+            </div>
+        `).join('');
+
+                    addMessage('Available Games:<br>' + gamesHTML);
                 })
-                .catch(error => addMessage('Error getting games: ' + error.message));
+                .catch(error => {
+                    console.error('Waiting games error:', error);
+                    addMessage('Error getting games: ' + error.message);
+                });
         }
 
+
         function updateGameState(game) {
+            console.log('Updating game state with:', game); // debug log
+
             const statusClass = game.status.toLowerCase();
             const statusHTML = `<span class="status ${statusClass}">${game.status}</span>`;
 
+            // สร้าง HTML สำหรับแต่ละผู้เล่น
             const playersHTML = game.players.map(p => {
                 const isCurrentPlayer = p.id === currentPlayerId;
                 const healthPercent = (p.health / 100) * 100;
+
+                // ถ้าเป็น opponent เก็บ ID ไว้สำหรับการโจมตี
+                if (!isCurrentPlayer) {
+                    otherPlayerId = p.id;
+                }
+
                 return `
-            <div class="stat" style="--health-percent: ${healthPercent}%">
-                <strong>${isCurrentPlayer ? 'You' : 'Opponent'}</strong><br>
-                ID: ${p.id}<br>
-                Health: ${p.health}<br>
-                Attack: ${p.attack}<br>
-                Defense: ${p.defense}<br>
-                Gold: ${p.gold}<br>
-                Level: ${p.level}
-            </div>
-            `;
+                    <div class="stat" style="--health-percent: ${healthPercent}%">
+                        <strong>${isCurrentPlayer ? 'You' : 'Opponent'}</strong><br>
+                        ID: ${p.id}<br>
+                        Username: ${p.username || 'Unknown'}<br>
+                        Health: ${p.health}<br>
+                        Attack: ${p.attack}<br>
+                        Defense: ${p.defense}<br>
+                        Gold: ${p.gold}<br>
+                        Level: ${p.level}
+                        ${isCurrentPlayer ? '' : `<button onclick="attack('${p.id}')" 
+                           ${game.status !== 'playing' ? 'disabled' : ''}>
+                           Attack
+                        </button>`}
+                    </div>
+                `;
             }).join('');
 
+            // อัพเดทข้อมูลเกม
             document.getElementById('playerDetails').innerHTML = `
-            Game ID: ${game.id}<br>
-            Status: ${statusHTML}
-        `;
+                Game ID: ${game.id}<br>
+                Status: ${statusHTML}<br>
+                ${game.status === 'waiting' ? 'Waiting for opponent...' : ''}
+            `;
             document.getElementById('playerStats').innerHTML = playersHTML;
+
+            // อัพเดทสถานะปุ่ม Attack ในเมนูหลัก
+            const attackBtn = document.getElementById('attackBtn');
+            if (attackBtn) {
+                const canAttack = game.status === 'playing' && game.players.length === 2;
+                attackBtn.disabled = !canAttack;
+            }
+
+            // อัพเดท currentGameId
+            if (game.id) {
+                currentGameId = game.id;
+                document.getElementById('gameIdInput').value = game.id;
+            }
 
             // อัพเดทหน้าร้านค้าถ้าเปิดอยู่
             if (shopVisible) {
                 updateShopDisplay();
             }
+
+            // แสดงข้อความสถานะเกม
+            let statusMessage = '';
+            switch (game.status) {
+                case 'waiting':
+                    statusMessage = 'Waiting for opponent to join...';
+                    break;
+                case 'playing':
+                    statusMessage = 'Game in progress';
+                    break;
+                case 'finished':
+                    statusMessage = 'Game finished';
+                    break;
+            }
+            addMessage(statusMessage);
         }
+
+
+
+
+
 
         function addMessage(message) {
             const messageBox = document.getElementById('messageBox');
             const timestamp = new Date().toLocaleTimeString();
             messageBox.innerHTML += `[${timestamp}] ${message}<br><br>`;
             messageBox.scrollTop = messageBox.scrollHeight;
+            console.log(`[${timestamp}] ${message}`); // เพิ่ม console log
         }
         let availableItems = [];
         let shopVisible = false;
@@ -635,6 +817,82 @@
                 })
             };
         }
+        function findMatch() {
+            if (!ws) {
+                addMessage('Not connected to server');
+                return;
+            }
+
+            const token = document.getElementById('tokenInput').value;
+            console.log('Finding match with token:', token); // debug log
+
+            const matchButton = document.querySelector('button[onclick="findMatch()"]');
+            matchButton.disabled = true;
+            matchButton.textContent = 'Finding Match...';
+
+            fetch('http://localhost:8080/games/match', {
+                method: 'POST',
+                headers: {
+                    'Authorization': 'Bearer ' + token,
+                    'Content-Type': 'application/json'
+                }
+            })
+                .then(response => {
+                    console.log('Match response:', response.status); // debug log
+                    if (!response.ok) {
+                        return response.text().then(text => {
+                            throw new Error(`HTTP error! status: ${response.status}, message: ${text}`);
+                        });
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    console.log('Match found:', data); // debug log
+                    addMessage('Match found: ' + JSON.stringify(data, null, 2));
+                })
+                .catch(error => {
+                    console.error('Match error:', error); // debug log
+                    addMessage('Error finding match: ' + error.message);
+                })
+                .finally(() => {
+                    matchButton.disabled = false;
+                    matchButton.textContent = 'Quick Match';
+                });
+        }
+
+        function attack(targetId = null) {
+            if (!ws || !currentGameId) {
+                addMessage('Not connected or no active game');
+                return;
+            }
+
+            const targetPlayerId = targetId || otherPlayerId;
+            if (!targetPlayerId) {
+                addMessage('No target player found');
+                return;
+            }
+
+            console.log('Sending attack command:', {
+                gameId: currentGameId,
+                targetId: targetPlayerId
+            });
+
+            try {
+                const message = {
+                    type: 'attack',
+                    game_id: currentGameId,
+                    target_id: targetPlayerId
+                };
+
+                ws.send(JSON.stringify(message));
+                addMessage('Attacking player: ' + targetPlayerId);
+            } catch (error) {
+                console.error('Error sending attack:', error);
+                addMessage('Error sending attack: ' + error.message);
+            }
+        }
+
+
 
 
 

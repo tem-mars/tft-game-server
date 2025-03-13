@@ -37,37 +37,37 @@ func New(cfg *Config, log logger.Logger) (*App, error) {
         MaxAge:           12 * time.Hour,
     }))
 
-
     playerRepo := repository.NewMemoryPlayerRepository()
     authService := service.NewAuthService(playerRepo, cfg.JWT.Secret)
-    gameManager := game.NewGameManager()
+    gameManager := game.NewGameManager(playerRepo)
 
     // Initialize handlers
     authHandler := handler.NewAuthHandler(authService, log)
-    gameHandler := handler.NewGameHandler(gameManager, log, cfg.JWT.Secret) 
+    gameHandler := handler.NewGameHandler(gameManager, log, cfg.JWT.Secret)
 
     // Public routes
     router.GET("/health", func(c *gin.Context) {
         c.JSON(http.StatusOK, gin.H{"status": "ok"})
     })
-
-    // Auth routes
     router.POST("/auth/register", authHandler.Register)
     router.POST("/auth/login", authHandler.Login)
 
-
+    // WebSocket route
     router.GET("/games/ws", gameHandler.HandleWebSocket)
 
     // Protected routes
-    protected := router.Group("/")
+    protected := router.Group("")
     protected.Use(middleware.AuthMiddleware(cfg.JWT.Secret))
     {
-        protected.GET("/items", gameHandler.GetAvailableItems)
-        protected.POST("/games/:gameId/buy/:itemId", gameHandler.BuyItem)
-        protected.GET("/games/waiting", gameHandler.GetWaitingGames)
-        protected.POST("/games/match", gameHandler.AutoMatch)
+        // Game routes
         protected.POST("/games", gameHandler.CreateGame)
         protected.POST("/games/:gameId/join", gameHandler.JoinGame)
+        protected.GET("/games/waiting", gameHandler.GetWaitingGames)
+        protected.POST("/games/match", gameHandler.AutoMatch)
+
+        // Item routes
+        protected.GET("/items", gameHandler.GetAvailableItems)
+        protected.POST("/games/:gameId/buy/:itemId", gameHandler.BuyItem)
     }
 
     server := &http.Server{
@@ -81,6 +81,7 @@ func New(cfg *Config, log logger.Logger) (*App, error) {
         server: server,
     }, nil
 }
+
 
 func (a *App) Start() error {
     a.log.Info("starting server",

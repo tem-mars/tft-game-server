@@ -10,6 +10,7 @@ import (
     "github.com/gorilla/websocket"
     "github.com/golang-jwt/jwt/v5"
     "github.com/tem-mars/tft-game-server/internal/domain/game"
+    "github.com/tem-mars/tft-game-server/internal/middleware"
     "github.com/tem-mars/tft-game-server/pkg/logger"
 )
 
@@ -28,9 +29,9 @@ type Claims struct {
 type GameHandler struct {
     gameManager *game.GameManager
     log        logger.Logger
-    connections map[string]*websocket.Conn
-    mu         sync.Mutex
     secret     string
+    connections map[string]*websocket.Conn
+    mu         sync.RWMutex  // เปลี่ยนจาก sync.Mutex เป็น sync.RWMutex
 }
 
 
@@ -38,103 +39,120 @@ func NewGameHandler(gameManager *game.GameManager, log logger.Logger, secret str
     handler := &GameHandler{
         gameManager: gameManager,
         log:        log,
-        connections: make(map[string]*websocket.Conn),
         secret:     secret,
+        connections: make(map[string]*websocket.Conn),
     }
 
-    
-    gameManager.SetUpdateCallback(handler.broadcastGameState)
+    // เปลี่ยนจาก SetUpdateCallback เป็น SetOnGameUpdate
+    gameManager.SetOnGameUpdate(handler.broadcastGameState)
 
     return handler
 }
 
 func (h *GameHandler) CreateGame(c *gin.Context) {
+    h.log.Info("Creating game...") // เพิ่ม logging
+
     claims, exists := c.Get("claims")
     if !exists {
-        c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+        h.log.Error("No claims found")
+        c.JSON(http.StatusUnauthorized, gin.H{"error": "No claims found"})
         return
     }
 
-    
-    if tokenClaims, ok := claims.(jwt.MapClaims); ok {
-        playerID, ok := tokenClaims["sub"].(string)
-        if !ok {
-            c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid player id"})
-            return
-        }
-
-        
-        h.log.Info("Creating game", 
-            logger.String("playerID", playerID))
-
-        game, err := h.gameManager.CreateGame(playerID)
-        if err != nil {
-            h.log.Error("Failed to create game", logger.Error(err))
-            c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-            return
-        }
-
-        h.log.Info("Game created successfully", 
-            logger.String("gameID", game.ID),
-            logger.String("playerID", playerID))
-
-        c.JSON(http.StatusCreated, game)
-    } else {
-        c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid claims"})
+    userClaims, ok := claims.(*middleware.Claims)
+    if !ok {
+        h.log.Error("Invalid claims type")
+        c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid claims type"})
+        return
     }
+
+    h.log.Info("Creating game for player", logger.String("playerID", userClaims.PlayerID))
+
+    game, err := h.gameManager.CreateGame(userClaims.PlayerID)
+    if err != nil {
+        h.log.Error("Failed to create game", logger.Error(err))
+        c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+        return
+    }
+
+    h.log.Info("Game created successfully", 
+        logger.String("gameID", game.ID),
+        logger.String("playerID", userClaims.PlayerID))
+
+    c.JSON(http.StatusOK, gin.H{
+        "status": "success",
+        "message": "Game created successfully",
+        "game": game,
+    })
 }
+
 func (h *GameHandler) JoinGame(c *gin.Context) {
-    gameID := c.Param("gameId")
     claims, exists := c.Get("claims")
     if !exists {
-        c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+        c.JSON(http.StatusUnauthorized, gin.H{"error": "No claims found"})
         return
     }
 
-    if tokenClaims, ok := claims.(jwt.MapClaims); ok {
-        playerID, ok := tokenClaims["sub"].(string)
-        if !ok {
-            c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid player id"})
-            return
-        }
-
-        err := h.gameManager.JoinGame(gameID, playerID)
-        if err != nil {
-            h.log.Error("Failed to join game", logger.Error(err))
-            c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-            return
-        }
-        c.JSON(http.StatusOK, gin.H{"message": "joined game successfully"})
-    } else {
-        c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid claims"})
+    userClaims, ok := claims.(*middleware.Claims)
+    if !ok {
+        c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid claims type"})
+        return
     }
+
+    gameID := c.Param("gameId")
+    err := h.gameManager.JoinGame(gameID, userClaims.PlayerID)
+    if err != nil {
+        h.log.Error("Failed to join game", 
+            logger.String("gameID", gameID),
+            logger.Error(err))
+        c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+        return
+    }
+
+    c.JSON(http.StatusOK, gin.H{"message": "Successfully joined game"})
 }
 
-func (h *GameHandler) broadcastGameState(gameID string, game *game.Game) {
-    h.mu.Lock()
-    defer h.mu.Unlock()
+func (h *GameHandler) broadcastGameState(game *game.Game) {
+    h.log.Info("Broadcasting game state", 
+        logger.String("gameID", game.ID),
+        logger.Int("playerCount", len(game.Players)))
 
     message := map[string]interface{}{
         "type": "game_state",
         "game": game,
     }
 
+    // ส่งข้อมูลให้ทุกคนที่เกี่ยวข้องกับเกม
     for _, player := range game.Players {
-        if conn, ok := h.connections[player.ID]; ok {
+        h.mu.RLock()
+        conn, exists := h.connections[player.ID]
+        h.mu.RUnlock()
+
+        if exists {
             if err := conn.WriteJSON(message); err != nil {
                 h.log.Error("Failed to send game state",
                     logger.String("playerID", player.ID),
-                    logger.Error(err),
-                )
+                    logger.Error(err))
+            } else {
+                h.log.Info("Sent game state to player",
+                    logger.String("playerID", player.ID))
             }
         }
     }
 }
 
 
+
+
 func (h *GameHandler) GetWaitingGames(c *gin.Context) {
+    h.log.Info("Getting waiting games...")
+
     games := h.gameManager.GetWaitingGames()
+    
+    h.log.Info("Found waiting games", logger.Int("count", len(games)))
+
     c.JSON(http.StatusOK, gin.H{
+        "status": "success",
         "games": games,
     })
 }
@@ -142,27 +160,24 @@ func (h *GameHandler) GetWaitingGames(c *gin.Context) {
 func (h *GameHandler) AutoMatch(c *gin.Context) {
     claims, exists := c.Get("claims")
     if !exists {
-        c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+        c.JSON(http.StatusUnauthorized, gin.H{"error": "No claims found"})
         return
     }
 
-    jwtClaims, ok := claims.(*jwt.MapClaims)
+    userClaims, ok := claims.(*middleware.Claims)
     if !ok {
-        c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid claims"})
+        c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid claims type"})
         return
     }
 
-    playerID, ok := (*jwtClaims)["player_id"].(string)
-    if !ok {
-        c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid player ID"})
-        return
-    }
-
-    game, err := h.gameManager.AutoMatch(playerID)
+    game, err := h.gameManager.AutoMatch(userClaims.PlayerID)
     if err != nil {
         c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
         return
     }
+
+    // ส่ง game state ให้ทุกคนในเกม
+    h.broadcastGameState(game)
 
     c.JSON(http.StatusOK, gin.H{
         "message": "Match found",
@@ -173,7 +188,7 @@ func (h *GameHandler) AutoMatch(c *gin.Context) {
 func (h *GameHandler) HandleWebSocket(c *gin.Context) {
     h.log.Info("New WebSocket connection attempt")
 
-    
+    // รับ token จาก query parameter
     token := c.Query("token")
     if token == "" {
         h.log.Error("No token provided")
@@ -181,14 +196,17 @@ func (h *GameHandler) HandleWebSocket(c *gin.Context) {
         return
     }
 
-    
+    // ลบ prefix "Bearer " ถ้ามี
     token = strings.TrimPrefix(token, "Bearer ")
     token = strings.TrimSpace(token)
 
     h.log.Info("Parsing token", logger.String("token", token))
 
+    // สร้าง claims struct
+    claims := &middleware.Claims{}
     
-    parsedToken, err := jwt.Parse(token, func(token *jwt.Token) (interface{}, error) {
+    // parse token ด้วย Claims struct ที่สร้างไว้
+    parsedToken, err := jwt.ParseWithClaims(token, claims, func(token *jwt.Token) (interface{}, error) {
         if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
             return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
         }
@@ -207,17 +225,9 @@ func (h *GameHandler) HandleWebSocket(c *gin.Context) {
         return
     }
 
-    
-    claims, ok := parsedToken.Claims.(jwt.MapClaims)
-    if !ok {
-        h.log.Error("Failed to get claims from token")
-        c.String(http.StatusUnauthorized, "Invalid claims")
-        return
-    }
-
-    
-    playerID, ok := claims["sub"].(string)
-    if !ok {
+    // ใช้ PlayerID จาก claims โดยตรง
+    playerID := claims.PlayerID
+    if playerID == "" {
         h.log.Error("No player ID in claims")
         c.String(http.StatusUnauthorized, "Invalid player ID")
         return
@@ -226,7 +236,7 @@ func (h *GameHandler) HandleWebSocket(c *gin.Context) {
     h.log.Info("Token validated successfully", 
         logger.String("playerID", playerID))
 
-    // Upgrade connection
+    // Upgrade connection to WebSocket
     conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
     if err != nil {
         h.log.Error("Failed to upgrade connection", logger.Error(err))
@@ -237,11 +247,12 @@ func (h *GameHandler) HandleWebSocket(c *gin.Context) {
     h.log.Info("WebSocket connection established", 
         logger.String("playerID", playerID))
 
-    
+    // เก็บ connection ในแมพ
     h.mu.Lock()
     h.connections[playerID] = conn
     h.mu.Unlock()
 
+    // ส่งข้อความต้อนรับ
     welcome := map[string]interface{}{
         "type": "welcome",
         "message": "Connected to game server",
@@ -253,7 +264,7 @@ func (h *GameHandler) HandleWebSocket(c *gin.Context) {
         return
     }
 
-    // Cleanup 
+    // Cleanup เมื่อจบการเชื่อมต่อ
     defer func() {
         h.mu.Lock()
         delete(h.connections, playerID)
@@ -261,6 +272,7 @@ func (h *GameHandler) HandleWebSocket(c *gin.Context) {
         h.log.Info("Player disconnected", logger.String("playerID", playerID))
     }()
 
+    // รับข้อความจาก WebSocket
     for {
         var message map[string]interface{}
         err := conn.ReadJSON(&message)
@@ -275,6 +287,7 @@ func (h *GameHandler) HandleWebSocket(c *gin.Context) {
             logger.String("playerID", playerID),
             logger.String("messageType", fmt.Sprintf("%v", message["type"])))
     
+        // จัดการข้อความตาม type
         switch message["type"] {
         case "get_game_state":
             if gameID, ok := message["game_id"].(string); ok {
@@ -313,45 +326,47 @@ func (h *GameHandler) HandleWebSocket(c *gin.Context) {
                 }
             }
         }
-    }
-
-    
-    
+    }   
 }
 
 func (h *GameHandler) GetAvailableItems(c *gin.Context) {
     items := h.gameManager.GetAvailableItems()
-    c.JSON(http.StatusOK, gin.H{
-        "items": items,
-    })
+    c.JSON(http.StatusOK, gin.H{"items": items})
 }
 
 func (h *GameHandler) BuyItem(c *gin.Context) {
     claims, exists := c.Get("claims")
     if !exists {
-        c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+        c.JSON(http.StatusUnauthorized, gin.H{"error": "No claims found"})
         return
     }
 
-    if tokenClaims, ok := claims.(jwt.MapClaims); ok {
-        playerID, ok := tokenClaims["sub"].(string)
-        if !ok {
-            c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid player id"})
-            return
-        }
-
-        gameID := c.Param("gameId")
-        itemID := c.Param("itemId")
-
-        err := h.gameManager.BuyItem(gameID, playerID, itemID)
-        if err != nil {
-            h.log.Error("Failed to buy item", logger.Error(err))
-            c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-            return
-        }
-
-        c.JSON(http.StatusOK, gin.H{"message": "item purchased successfully"})
-    } else {
-        c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid claims"})
+    userClaims, ok := claims.(*middleware.Claims)
+    if !ok {
+        c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid claims type"})
+        return
     }
+
+    gameID := c.Param("gameId")
+    itemID := c.Param("itemId")
+
+    err := h.gameManager.BuyItem(gameID, userClaims.PlayerID, itemID)
+    if err != nil {
+        h.log.Error("Failed to buy item",
+            logger.String("gameID", gameID),
+            logger.String("itemID", itemID),
+            logger.Error(err))
+        c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+        return
+    }
+
+    c.JSON(http.StatusOK, gin.H{"message": "Item purchased successfully"})
 }
+
+
+
+
+
+
+
+

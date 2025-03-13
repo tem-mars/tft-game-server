@@ -103,7 +103,7 @@ func (m *GameManager) BuyItem(gameID string, playerID string, itemID string) err
     })
 
     if m.onGameUpdate != nil {
-        m.onGameUpdate(game.ID, game)
+        m.onGameUpdate(game)
     }
 
     return nil

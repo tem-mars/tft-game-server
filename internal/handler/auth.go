@@ -1,13 +1,14 @@
 package handler
 
 import (
+
     "github.com/gin-gonic/gin"
     "github.com/tem-mars/tft-game-server/pkg/logger"
 )
 
 type AuthService interface {
     Register(username, password, email string) error
-    Login(username, password string) (string, error)  
+    Login(username, password string) (string, error)
 }
 
 type AuthHandler struct {
@@ -21,6 +22,7 @@ func NewAuthHandler(authService AuthService, log logger.Logger) *AuthHandler {
         log:        log,
     }
 }
+
 
 type RegisterRequest struct {
     Username string `json:"username" binding:"required"`

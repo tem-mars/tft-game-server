@@ -1,15 +1,22 @@
 package service
 
 import (
+    "context"  // เพิ่ม import
     "fmt"
     "time"
     "github.com/golang-jwt/jwt/v5"
-    "github.com/tem-mars/tft-game-server/internal/repository"  
+    "github.com/tem-mars/tft-game-server/internal/repository"
+    "github.com/tem-mars/tft-game-server/internal/middleware"
 )
 
 type PlayerRepository interface {
-    FindByUsername(username string) (*repository.Player, error)  
-    Save(player *repository.Player) error  
+    Create(ctx context.Context, username, email, password string) (*repository.Player, error)
+    GetByUsername(username string) (*repository.Player, error)
+    GetByID(ctx context.Context, id string) (*repository.Player, error)
+    GetByEmail(ctx context.Context, email string) (*repository.Player, error)
+    Update(ctx context.Context, player *repository.Player) error
+    UpdateStats(ctx context.Context, stats *repository.Stats) error
+    GetStats(ctx context.Context, playerID string) (*repository.Stats, error)
 }
 
 type AuthService struct {
@@ -25,16 +32,12 @@ func NewAuthService(playerRepo PlayerRepository, jwtSecret string) *AuthService 
 }
 
 func (s *AuthService) Register(username, password, email string) error {
-    player := &repository.Player{  
-        Username: username,
-        Password: password,
-        Email:    email,
-    }
-    return s.playerRepo.Save(player)
+    _, err := s.playerRepo.Create(context.Background(), username, email, password)
+    return err
 }
 
 func (s *AuthService) Login(username, password string) (string, error) {
-    player, err := s.playerRepo.FindByUsername(username)
+    player, err := s.playerRepo.GetByUsername(username)
     if err != nil {
         return "", err
     }
@@ -43,22 +46,15 @@ func (s *AuthService) Login(username, password string) (string, error) {
         return "", fmt.Errorf("invalid credentials")
     }
 
-    
-    claims := jwt.MapClaims{
-        "sub": player.ID,
-        "username": player.Username,
-        "exp": time.Now().Add(time.Hour * 24).Unix(),
-        "iat": time.Now().Unix(),
+    claims := &middleware.Claims{
+        PlayerID: player.ID,
+        RegisteredClaims: jwt.RegisteredClaims{
+            Subject:   player.ID,
+            IssuedAt:  jwt.NewNumericDate(time.Now()),
+            ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
+        },
     }
 
     token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-    tokenString, err := token.SignedString([]byte(s.jwtSecret))
-    if err != nil {
-        return "", fmt.Errorf("failed to create token: %v", err)
-    }
-
-    // Debug log
-    fmt.Printf("Generated token for user %s: %s\n", username, tokenString)
-
-    return tokenString, nil
+    return token.SignedString([]byte(s.jwtSecret))
 }

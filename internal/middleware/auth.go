@@ -1,55 +1,55 @@
 package middleware
 
 import (
-    "fmt"
+    "net/http"
     "strings"
+
     "github.com/gin-gonic/gin"
     "github.com/golang-jwt/jwt/v5"
 )
 
-func AuthMiddleware(secret string) gin.HandlerFunc {
+// Claims struct สำหรับเก็บข้อมูล JWT
+type Claims struct {
+    PlayerID string `json:"player_id"`
+    jwt.RegisteredClaims
+}
+
+func AuthMiddleware(jwtSecret string) gin.HandlerFunc {
     return func(c *gin.Context) {
         authHeader := c.GetHeader("Authorization")
         if authHeader == "" {
-            c.JSON(401, gin.H{"error": "no authorization header"})
+            c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header is required"})
             c.Abort()
             return
         }
 
-        parts := strings.Split(authHeader, " ")
-        if len(parts) != 2 || parts[0] != "Bearer" {
-            c.JSON(401, gin.H{"error": "invalid authorization format"})
+        bearerToken := strings.Split(authHeader, " ")
+        if len(bearerToken) != 2 || bearerToken[0] != "Bearer" {
+            c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token format"})
             c.Abort()
             return
         }
 
-        tokenString := parts[1]
-
-        // Parse token
-        token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-            if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-                return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-            }
-            return []byte(secret), nil
+        tokenString := bearerToken[1]
+        claims := &Claims{}
+        
+        token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
+            return []byte(jwtSecret), nil
         })
 
         if err != nil {
-            fmt.Printf("Token Error: %v\n", err)
-            c.JSON(401, gin.H{"error": fmt.Sprintf("invalid token: %v", err)})
+            c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token: " + err.Error()})
             c.Abort()
             return
         }
 
-        if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
-            c.Set("claims", claims)
-            if sub, ok := claims["sub"].(string); ok {
-                c.Set("playerID", sub)
-            }
-            c.Next()
-        } else {
-            c.JSON(401, gin.H{"error": "invalid token claims"})
+        if !token.Valid {
+            c.JSON(http.StatusUnauthorized, gin.H{"error": "Token is not valid"})
             c.Abort()
             return
         }
+
+        c.Set("claims", claims)
+        c.Next()
     }
 }

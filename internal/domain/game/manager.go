@@ -1,63 +1,70 @@
 package game
 
 import (
-    "fmt" 
+    "context"  
+    "fmt"
     "sync"
     "time"
+    "github.com/tem-mars/tft-game-server/internal/repository"  // เพิ่ม import
 )
 
 type GameManager struct {
-    games map[string]*Game
-    mu    sync.RWMutex
-    onGameUpdate func(gameID string, game *Game)
+    mu         sync.RWMutex
+    games      map[string]*Game
+    playerRepo repository.PlayerRepository
+    onGameUpdate func(*Game) 
 }
 
-func NewGameManager() *GameManager {
+func NewGameManager(playerRepo repository.PlayerRepository) *GameManager {
     return &GameManager{
-        games: make(map[string]*Game),
+        games:      make(map[string]*Game),
+        playerRepo: playerRepo,
+        onGameUpdate: func(*Game) {}, // default empty function
     }
 }
 
-func (m *GameManager) SetUpdateCallback(callback func(gameID string, game *Game)) {
+func (m *GameManager) SetOnGameUpdate(callback func(*Game)) {
     m.mu.Lock()
     defer m.mu.Unlock()
     m.onGameUpdate = callback
 }
 
-// แก้ไขฟังก์ชัน CreateGame
 func (m *GameManager) CreateGame(playerID string) (*Game, error) {
-    m.mu.Lock()
-    defer m.mu.Unlock()
+    // ดึงข้อมูล player จาก repository
+    player, err := m.playerRepo.GetByID(context.Background(), playerID)
+    if err != nil {
+        return nil, err
+    }
 
     game := &Game{
-        ID: generateGameID(),
-        Players: []*Player{
-            {
-                ID:      playerID,
-                Health:  100,
-                Gold:    0,
-                Level:   1,
-                Attack:  10,    // เพิ่มค่าโจมตีเริ่มต้น
-                Defense: 5,     // เพิ่มค่าป้องกันเริ่มต้น
-            },
-        },
-        Status:    StatusWaiting,
-        Actions:   make([]GameAction, 0),
+        ID:     generateGameID(),
+        Status: "waiting",  // ใช้ string แทน constant
+        Players: []*Player{{
+            ID:       playerID,
+            Username: player.Username,
+            Health:   100,
+            Gold:     player.Stats.Gold,
+            Level:    player.Stats.Level,
+            Attack:   10,
+            Defense:  5,
+        }},
         CreatedAt: time.Now(),
         UpdatedAt: time.Now(),
     }
 
+    m.mu.Lock()
     m.games[game.ID] = game
-
-    if m.onGameUpdate != nil {
-        m.onGameUpdate(game.ID, game)
-    }
+    m.mu.Unlock()
 
     return game, nil
 }
 
-// แก้ไขฟังก์ชัน JoinGame
 func (m *GameManager) JoinGame(gameID string, playerID string) error {
+    player, err := m.playerRepo.GetByID(context.Background(), playerID)
+    if err != nil {
+        return err
+    }
+
     m.mu.Lock()
     defer m.mu.Unlock()
 
@@ -66,37 +73,39 @@ func (m *GameManager) JoinGame(gameID string, playerID string) error {
         return ErrGameNotFound
     }
 
-    if game.Status != StatusWaiting {
-        return ErrGameNotJoinable
-    }
-
+    // เช็คว่าผู้เล่นอยู่ในเกมแล้วหรือไม่
     for _, p := range game.Players {
         if p.ID == playerID {
             return ErrPlayerAlreadyInGame
         }
     }
 
+    // เพิ่มผู้เล่นใหม่
     game.Players = append(game.Players, &Player{
-        ID:      playerID,
-        Health:  100,
-        Gold:    0,
-        Level:   1,
-        Attack:  10,    // เพิ่มค่าโจมตีเริ่มต้น
-        Defense: 5,     // เพิ่มค่าป้องกันเริ่มต้น
+        ID:       playerID,
+        Username: player.Username,
+        Health:   100,
+        Gold:     player.Stats.Gold,
+        Level:    player.Stats.Level,
+        Attack:   10,
+        Defense:  5,
     })
 
-    if len(game.Players) >= 2 {
-        game.Status = StatusPlaying
+    // อัพเดทสถานะเกม
+    if len(game.Players) == 2 {
+        game.Status = "playing"
     }
 
     game.UpdatedAt = time.Now()
 
+    // เรียก callback เพื่ออัพเดทสถานะ
     if m.onGameUpdate != nil {
-        m.onGameUpdate(game.ID, game)
+        m.onGameUpdate(game)
     }
 
     return nil
 }
+
 
 func (m *GameManager) GetGame(gameID string) (*Game, error) {
     m.mu.RLock()
@@ -161,7 +170,7 @@ func (m *GameManager) ProcessAction(gameID string, action GameAction) error {
 
         // ส่งอัพเดทให้ผู้เล่น
         if m.onGameUpdate != nil {
-            m.onGameUpdate(game.ID, game)
+            m.onGameUpdate(game)
         }
 
     case ActionBuyItem:
@@ -190,83 +199,92 @@ func (m *GameManager) GetWaitingGames() []*Game {
     m.mu.RLock()
     defer m.mu.RUnlock()
 
-    // ทำความสะอาดเกมที่ไม่ได้ใช้งาน
-    m.cleanupInactiveGames()
-
-    waitingGames := make([]*Game, 0)
+    var waitingGames []*Game
     for _, game := range m.games {
-        if game.Status == StatusWaiting && len(game.Players) < 2 {
+        if game.Status == "waiting" && len(game.Players) < 2 {
             waitingGames = append(waitingGames, game)
         }
     }
     return waitingGames
 }
 
-// เพิ่มเมธอดสำหรับ auto matching
 func (m *GameManager) AutoMatch(playerID string) (*Game, error) {
     m.mu.Lock()
     defer m.mu.Unlock()
 
-    // ทำความสะอาดเกมที่ไม่ได้ใช้งาน
-    m.cleanupInactiveGames()
-
-    // ตรวจสอบว่าผู้เล่นอยู่ในเกมอื่นหรือไม่
+    // ค้นหาเกมที่รอผู้เล่น
     for _, game := range m.games {
-        for _, p := range game.Players {
-            if p.ID == playerID {
-                return nil, ErrPlayerAlreadyInGame
+        if game.Status == "waiting" && len(game.Players) < 2 {
+            // ตรวจสอบว่าผู้เล่นไม่ได้อยู่ในเกมนี้
+            playerInGame := false
+            for _, p := range game.Players {
+                if p.ID == playerID {
+                    playerInGame = true
+                    break
+                }
+            }
+
+            if !playerInGame {
+                // ดึงข้อมูล player
+                player, err := m.playerRepo.GetByID(context.Background(), playerID)
+                if err != nil {
+                    return nil, err
+                }
+
+                // เพิ่มผู้เล่น
+                game.Players = append(game.Players, &Player{
+                    ID:       playerID,
+                    Username: player.Username,
+                    Health:   100,
+                    Gold:     player.Stats.Gold,
+                    Level:    player.Stats.Level,
+                    Attack:   10,
+                    Defense:  5,
+                })
+
+                game.Status = "playing"
+                game.UpdatedAt = time.Now()
+
+                // เรียก callback
+                if m.onGameUpdate != nil {
+                    m.onGameUpdate(game)
+                }
+
+                return game, nil
             }
         }
     }
 
-    // หาเกมที่กำลังรอ
-    var waitingGame *Game
-    for _, game := range m.games {
-        if game.Status == StatusWaiting && len(game.Players) < 2 {
-            waitingGame = game
-            break
-        }
+    // สร้างเกมใหม่ถ้าไม่พบเกมที่รอ
+    player, err := m.playerRepo.GetByID(context.Background(), playerID)
+    if err != nil {
+        return nil, err
     }
 
-    // ถ้าไม่มีเกมที่รอ ให้สร้างเกมใหม่
-    if waitingGame == nil {
-        waitingGame = &Game{
-            ID: generateGameID(),
-            Players: []*Player{
-                {
-                    ID:      playerID,
-                    Health:  100,
-                    Gold:    0,
-                    Level:   1,
-                    Attack:  10,
-                    Defense: 5,
-                },
-            },
-            Status:    StatusWaiting,
-            Actions:   make([]GameAction, 0),
-            CreatedAt: time.Now(),
-            UpdatedAt: time.Now(),
-        }
-        m.games[waitingGame.ID] = waitingGame
-    } else {
-        // เข้าร่วมเกมที่รออยู่
-        waitingGame.Players = append(waitingGame.Players, &Player{
-            ID:      playerID,
-            Health:  100,
-            Gold:    0,
-            Level:   1,
-            Attack:  10,
-            Defense: 5,
-        })
-        waitingGame.Status = StatusPlaying
-        waitingGame.UpdatedAt = time.Now()
+    game := &Game{
+        ID:     generateGameID(),
+        Status: "waiting",
+        Players: []*Player{{
+            ID:       playerID,
+            Username: player.Username,
+            Health:   100,
+            Gold:     player.Stats.Gold,
+            Level:    player.Stats.Level,
+            Attack:   10,
+            Defense:  5,
+        }},
+        CreatedAt: time.Now(),
+        UpdatedAt: time.Now(),
     }
 
+    m.games[game.ID] = game
+
+    // เรียก callback
     if m.onGameUpdate != nil {
-        m.onGameUpdate(waitingGame.ID, waitingGame)
+        m.onGameUpdate(game)
     }
 
-    return waitingGame, nil
+    return game, nil
 }
 
 func (m *GameManager) cleanupInactiveGames() {
