@@ -20,11 +20,7 @@ var upgrader = websocket.Upgrader{
     },
 }
 
-type Claims struct {
-    PlayerID string `json:"sub"`  
-    Username string `json:"username"`
-    jwt.RegisteredClaims
-}
+
 
 type GameHandler struct {
     gameManager *game.GameManager
@@ -334,39 +330,55 @@ func (h *GameHandler) GetAvailableItems(c *gin.Context) {
     c.JSON(http.StatusOK, gin.H{"items": items})
 }
 
-func (h *GameHandler) BuyItem(c *gin.Context) {
+func (h *GameHandler) getPlayerClaims(c *gin.Context) (*middleware.Claims, error) {
     claims, exists := c.Get("claims")
     if !exists {
-        c.JSON(http.StatusUnauthorized, gin.H{"error": "No claims found"})
-        return
+        return nil, fmt.Errorf("no claims found")
     }
 
-    userClaims, ok := claims.(*middleware.Claims)
+    playerClaims, ok := claims.(*middleware.Claims)
     if !ok {
-        c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid claims type"})
+        return nil, fmt.Errorf("invalid claims type")
+    }
+
+    return playerClaims, nil
+}
+
+
+func (h *GameHandler) BuyItem(c *gin.Context) {
+    claims, err := h.getPlayerClaims(c)
+    if err != nil {
+        h.log.Error("Failed to get player claims", logger.Error(err))
+        c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
         return
     }
 
-    gameID := c.Param("gameId")
-    itemID := c.Param("itemId")
-
-    err := h.gameManager.BuyItem(gameID, userClaims.PlayerID, itemID)
-    if err != nil {
-        h.log.Error("Failed to buy item",
-            logger.String("gameID", gameID),
-            logger.String("itemID", itemID),
-            logger.Error(err))
+    var itemAction game.ItemAction
+    if err := c.ShouldBindJSON(&itemAction); err != nil {
+        h.log.Error("Failed to bind item action", logger.Error(err))
         c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
         return
     }
 
-    c.JSON(http.StatusOK, gin.H{"message": "Item purchased successfully"})
+    // เพิ่ม logging
+    h.log.Info("Attempting to buy item",
+        logger.String("playerID", claims.PlayerID),
+        logger.String("gameID", itemAction.GameID),
+        logger.String("itemID", itemAction.ItemID))
+
+    err = h.gameManager.BuyItem(itemAction.GameID, claims.PlayerID, itemAction.ItemID)
+    if err != nil {
+        h.log.Error("Failed to buy item", logger.Error(err))
+        c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+        return
+    }
+
+    h.log.Info("Item purchased successfully",
+        logger.String("playerID", claims.PlayerID),
+        logger.String("itemID", itemAction.ItemID))
+
+    c.JSON(http.StatusOK, gin.H{
+        "status": "success",
+        "message": "Item purchased successfully",  // เพิ่มเครื่องหมาย comma ตรงนี้
+    })
 }
-
-
-
-
-
-
-
-

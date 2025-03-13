@@ -65,9 +65,8 @@ func New(cfg *Config, log logger.Logger) (*App, error) {
         protected.GET("/games/waiting", gameHandler.GetWaitingGames)
         protected.POST("/games/match", gameHandler.AutoMatch)
 
-        // Item routes
         protected.GET("/items", gameHandler.GetAvailableItems)
-        protected.POST("/games/:gameId/buy/:itemId", gameHandler.BuyItem)
+        protected.POST("/items/buy", gameHandler.BuyItem)
     }
 
     server := &http.Server{

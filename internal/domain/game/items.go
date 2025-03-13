@@ -5,16 +5,18 @@ import (
     "time"
 )
 
-// เพิ่ม error constant
+// เพิ่ม error constants
 var (
-    ErrPlayerNotFound = fmt.Errorf("player not found")
+    ErrPlayerNotFound    = fmt.Errorf("player not found")
+    ErrItemNotFound      = fmt.Errorf("item not found")
+    ErrInsufficientGold  = fmt.Errorf("not enough gold")
 )
 
-var DefaultItems = map[string]*Item{
+var DefaultItems = map[string]Item{  // เปลี่ยนจาก *Item เป็น Item
     "sword": {
         ID:          "sword",
         Name:        "Sword",
-        Type:        ItemWeapon,
+        Type:        ItemTypeWeapon,  // แก้ให้ตรงกับ constant ใน types.go
         Attack:      5,
         Defense:     0,
         Health:      0,
@@ -24,7 +26,7 @@ var DefaultItems = map[string]*Item{
     "shield": {
         ID:          "shield",
         Name:        "Shield",
-        Type:        ItemArmor,
+        Type:        ItemTypeArmor,   // แก้ให้ตรงกับ constant ใน types.go
         Attack:      0,
         Defense:     5,
         Health:      0,
@@ -34,7 +36,7 @@ var DefaultItems = map[string]*Item{
     "potion": {
         ID:          "potion",
         Name:        "Health Potion",
-        Type:        ItemPotion,
+        Type:        ItemTypePotion,  // แก้ให้ตรงกับ constant ใน types.go
         Attack:      0,
         Defense:     0,
         Health:      20,
@@ -43,9 +45,9 @@ var DefaultItems = map[string]*Item{
     },
 }
 
-// เพิ่มเมธอดใน GameManager
-func (m *GameManager) GetAvailableItems() []*Item {
-    items := make([]*Item, 0, len(DefaultItems))
+// แก้ไขเมธอดให้สอดคล้องกับ types ที่เปลี่ยน
+func (m *GameManager) GetAvailableItems() []Item {  // เปลี่ยนจาก []*Item เป็น []Item
+    items := make([]Item, 0, len(DefaultItems))
     for _, item := range DefaultItems {
         items = append(items, item)
     }
@@ -74,21 +76,21 @@ func (m *GameManager) BuyItem(gameID string, playerID string, itemID string) err
 
     item, exists := DefaultItems[itemID]
     if !exists {
-        return fmt.Errorf("item not found")
+        return ErrItemNotFound
     }
 
     if player.Gold < item.Cost {
-        return fmt.Errorf("not enough gold")
+        return ErrInsufficientGold
     }
 
     // หักเงินและเพิ่มไอเทม
     player.Gold -= item.Cost
-    player.Items = append(player.Items, item)
+    player.Inventory = append(player.Inventory, item)  // เปลี่ยนจาก Items เป็น Inventory
 
     // อัพเดทค่าสถานะตามไอเทม
     player.Attack += item.Attack
     player.Defense += item.Defense
-    if item.Type == ItemPotion {
+    if item.Type == ItemTypePotion {  // แก้ให้ตรงกับ constant ใน types.go
         player.Health = min(100, player.Health+item.Health)
     }
 
@@ -96,7 +98,7 @@ func (m *GameManager) BuyItem(gameID string, playerID string, itemID string) err
 
     // เพิ่มประวัติการซื้อไอเทม
     game.Actions = append(game.Actions, GameAction{
-        Type:      "buy_item",
+        Type:      ActionBuyItem,  // ใช้ constant จาก types.go
         PlayerID:  playerID,
         ItemID:    itemID,
         Timestamp: time.Now(),
